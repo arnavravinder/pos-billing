@@ -7,3 +7,4 @@ window.FIREBASE_CONFIG = {
   messagingSenderId: "752251411981",
   appId: "1:752251411981:web:3bcde46653b813c8397f44"
 };
+window.ADMIN_PIN = "2580";

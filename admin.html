@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Vita · Admin</title>
+<style>
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;background:#f3f4f6;color:#111}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:10px 16px;background:#111;color:#fff}
+header h1{margin:0;font-size:18px}
+.hright{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pill{padding:4px 10px;border-radius:999px;background:#374151;font-size:13px}
+.pill.live{background:#15803d}.pill.warn{background:#b45309}
+input[type=date]{padding:6px 8px;border-radius:6px;border:0;font-size:14px}
+main{padding:14px;max-width:1300px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn{padding:10px 14px;border-radius:8px;border:1px solid #d1d5db;background:#fff;font-weight:600;font-size:14px;cursor:pointer}
+.btn.dark{background:#111;color:#fff;border-color:#111}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.tile{background:#fff;border-radius:10px;padding:12px 14px;border:1px solid #e5e7eb}
+.tile .l{font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px}
+.tile .v{font-size:26px;font-weight:800;margin-top:4px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:900px){.grid2{grid-template-columns:1fr}}
+.card{background:#fff;border-radius:10px;border:1px solid #e5e7eb;overflow:hidden}
+.card h2{margin:0;padding:10px 14px;font-size:15px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}
+.scroll{overflow:auto;max-height:520px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:7px 12px;text-align:left;border-bottom:1px solid #f1f1f1;vertical-align:top}
+th{background:#f9fafb;font-size:12px;text-transform:uppercase;letter-spacing:.3px;color:#6b7280;position:sticky;top:0}
+td.r,th.r{text-align:right}
+tr.cat td{font-weight:700;color:#fff;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+tr.cat.food td{background:#c2410c}tr.cat.bev td{background:#0369a1}tr.cat.des td{background:#be185d}tr.cat.other td{background:#475569}
+tr.sub td{font-weight:700;background:#f9fafb}
+.items{color:#374151;font-size:13px}
+.tag{font-size:11px;padding:2px 7px;border-radius:999px;font-weight:700}
+.tag.done{background:#dcfce7;color:#166534}.tag.open{background:#fef3c7;color:#92400e}
+.empty{padding:30px;text-align:center;color:#9ca3af}
+#gate{position:fixed;inset:0;background:#111;display:flex;align-items:center;justify-content:center}
+#gate form{background:#fff;padding:24px;border-radius:12px;display:flex;flex-direction:column;gap:10px;width:280px}
+#gate input{font-size:22px;padding:10px;border:2px solid #ddd;border-radius:8px;text-align:center;letter-spacing:4px}
+#gate .err{color:#b91c1c;font-size:13px;min-height:16px}
+</style>
+</head>
+<body>
+<div id="gate" hidden>
+<form id="gateForm">
+<b>Project Vita admin</b>
+<input id="pin" type="password" inputmode="numeric" placeholder="PIN" autofocus>
+<div class="err" id="gateErr"></div>
+<button class="btn dark" type="submit">Open</button>
+</form>
+</div>
+
+<header>
+<h1>Project Vita · Admin</h1>
+<div class="hright">
+<input type="date" id="day">
+<span class="pill" id="mode">connecting…</span>
+</div>
+</header>
+
+<main id="app" hidden>
+<div class="actions">
+<button class="btn dark" id="pdfReport">Sales report PDF</button>
+<button class="btn dark" id="pdfBills">All bills PDF</button>
+<button class="btn" id="csvBills">Bills CSV</button>
+<button class="btn" id="csvLines">Line items CSV</button>
+</div>
+
+<div class="tiles" id="tiles"></div>
+
+<div class="grid2">
+<div class="card"><h2>Item-wise sales</h2><div class="scroll"><table id="itemTable"></table></div></div>
+<div class="card"><h2>Payments &amp; hourly sales</h2><div class="scroll"><table id="payTable"></table><table id="hourTable"></table></div></div>
+</div>
+
+<div class="card"><h2><span>All orders</span><span id="orderCount" style="font-weight:500;color:#6b7280"></span></h2>
+<div class="scroll"><table id="orderTable"></table></div></div>
+</main>
+
+<script src="firebase-config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<script type="module">
+const FIREBASE_CONFIG = window.FIREBASE_CONFIG || null;
+const ADMIN_PIN = window.ADMIN_PIN || null;
+const CATS = [
+  { key: "food", title: "Food" },
+  { key: "bev", title: "Beverages" },
+  { key: "des", title: "Desserts" }
+];
+
+const $ = s => document.querySelector(s);
+let all = [];
+
+const rs = n => "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+const rsPdf = n => "Rs " + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pad = n => String(n).padStart(2, "0");
+const localDay = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const fmtTime = iso => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+const fmtDayLong = ymd => new Date(ymd + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+const catOf = it => CATS.some(c => c.key === it.cat) ? it.cat : "other";
+const catTitle = k => (CATS.find(c => c.key === k) || { title: "Other" }).title;
+
+function dayOrders() {
+  const day = $("#day").value;
+  return all.filter(o => o.createdAt && localDay(new Date(o.createdAt)) === day)
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+}
+
+function summarize(orders) {
+  const s = { count: orders.length, total: 0, items: 0, pay: {}, hours: {}, lines: new Map() };
+  for (const o of orders) {
+    s.total += o.total || 0;
+    const p = o.payment || "Unknown";
+    s.pay[p] = s.pay[p] || { count: 0, total: 0 };
+    s.pay[p].count++;
+    s.pay[p].total += o.total || 0;
+    const h = new Date(o.createdAt).getHours();
+    s.hours[h] = s.hours[h] || { count: 0, total: 0 };
+    s.hours[h].count++;
+    s.hours[h].total += o.total || 0;
+    for (const it of o.items || []) {
+      s.items += it.qty;
+      const k = it.id + "|" + it.name;
+      const cur = s.lines.get(k) || { name: it.name, cat: catOf(it), price: it.price, qty: 0, total: 0 };
+      cur.qty += it.qty;
+      cur.total += it.qty * it.price;
+      s.lines.set(k, cur);
+    }
+  }
+  s.avg = s.count ? s.total / s.count : 0;
+  const order = [...CATS.map(c => c.key), "other"];
+  s.groups = order.map(k => {
+    const lines = [...s.lines.values()].filter(l => l.cat === k).sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
+    return { key: k, title: catTitle(k), lines, qty: lines.reduce((a, l) => a + l.qty, 0), total: lines.reduce((a, l) => a + l.total, 0) };
+  }).filter(g => g.lines.length);
+  return s;
+}
+
+function hourLabel(h) {
+  const f = x => { const hh = x % 12 || 12; return hh + (x < 12 ? "am" : "pm"); };
+  return `${f(h)}–${f((h + 1) % 24)}`;
+}
+
+function itemsText(o) {
+  return (o.items || []).map(i => `${i.qty}x ${i.name}`).join(", ");
+}
+
+function render() {
+  const orders = dayOrders();
+  const s = summarize(orders);
+  const cash = s.pay.Cash?.total || 0, upi = s.pay.UPI?.total || 0;
+  $("#tiles").innerHTML = [
+    ["Total sales", rs(s.total)], ["Orders", s.count], ["Items sold", s.items],
+    ["Cash", rs(cash)], ["UPI", rs(upi)], ["Avg bill", rs(Math.round(s.avg))]
+  ].map(([l, v]) => `<div class="tile"><div class="l">${l}</div><div class="v">${v}</div></div>`).join("");
+
+  $("#itemTable").innerHTML = s.groups.length ? `<tr><th>Item</th><th class="r">Price</th><th class="r">Qty</th><th class="r">Amount</th></tr>` +
+    s.groups.map(g => `<tr class="cat ${g.key}"><td colspan="4">${esc(g.title)}</td></tr>` +
+      g.lines.map(l => `<tr><td>${esc(l.name)}</td><td class="r">${rs(l.price)}</td><td class="r">${l.qty}</td><td class="r">${rs(l.total)}</td></tr>`).join("") +
+      `<tr class="sub"><td>${esc(g.title)} total</td><td></td><td class="r">${g.qty}</td><td class="r">${rs(g.total)}</td></tr>`).join("") +
+    `<tr class="sub"><td>Grand total</td><td></td><td class="r">${s.items}</td><td class="r">${rs(s.total)}</td></tr>`
+    : `<tr><td class="empty">No sales on this day</td></tr>`;
+
+  const pays = Object.entries(s.pay);
+  $("#payTable").innerHTML = pays.length ? `<tr><th>Payment</th><th class="r">Bills</th><th class="r">Amount</th></tr>` +
+    pays.map(([p, v]) => `<tr><td>${esc(p)}</td><td class="r">${v.count}</td><td class="r">${rs(v.total)}</td></tr>`).join("") : "";
+  const hours = Object.keys(s.hours).map(Number).sort((a, b) => a - b);
+  $("#hourTable").innerHTML = hours.length ? `<tr><th>Hour</th><th class="r">Bills</th><th class="r">Amount</th></tr>` +
+    hours.map(h => `<tr><td>${hourLabel(h)}</td><td class="r">${s.hours[h].count}</td><td class="r">${rs(s.hours[h].total)}</td></tr>`).join("") : "";
+
+  $("#orderCount").textContent = `${s.count} orders`;
+  $("#orderTable").innerHTML = orders.length ? `<tr><th>#</th><th>Bill</th><th>Time</th><th>Payment</th><th>Items</th><th class="r">Total</th><th>Kitchen</th></tr>` +
+    orders.slice().reverse().map(o => `<tr><td><b>${esc(o.seq)}</b></td><td>${esc(o.billNo)}</td><td>${fmtTime(o.createdAt)}</td><td>${esc(o.payment)}${o.tendered != null ? `<div class="items">paid ${rs(o.tendered)}, change ${rs(o.change)}</div>` : ""}</td>
+      <td class="items">${esc(itemsText(o))}</td><td class="r"><b>${rs(o.total)}</b></td>
+      <td><span class="tag ${o.kitchenDone ? "done" : "open"}">${o.kitchenDone ? "done" : "open"}</span></td></tr>`).join("")
+    : `<tr><td class="empty">No orders on this day</td></tr>`;
+
+  const none = !orders.length;
+  ["#pdfReport", "#pdfBills", "#csvBills", "#csvLines"].forEach(id => $(id).disabled = none);
+}
+
+function fileBase() { return "project-vita-" + $("#day").value; }
+
+function newPdf() {
+  if (!window.jspdf) { alert("PDF library didn't load. Check the internet connection and reload."); return null; }
+  return new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+}
+
+function pdfHeader(doc, title) {
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text("Project Vita · Sports Day Stall", 14, 16);
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "normal");
+  doc.text(`${title} · ${fmtDayLong($("#day").value)}`, 14, 23);
+  doc.setFontSize(8);
+  doc.setTextColor(120);
+  doc.text("Generated " + new Date().toLocaleString("en-IN"), 14, 28);
+  doc.setTextColor(0);
+  return 33;
+}
+
+const CAT_RGB = { food: [194, 65, 12], bev: [3, 105, 161], des: [190, 24, 93], other: [71, 85, 105] };
+
+function salesReportPdf() {
+  const doc = newPdf(); if (!doc) return;
+  const orders = dayOrders(), s = summarize(orders);
+  let y = pdfHeader(doc, "Sales report");
+  doc.autoTable({
+    startY: y, theme: "grid", styles: { fontSize: 11 }, headStyles: { fillColor: [17, 17, 17] },
+    head: [["Total sales", "Orders", "Items sold", "Average bill"]],
+    body: [[rsPdf(s.total), s.count, s.items, rsPdf(s.avg)]]
+  });
+  y = doc.lastAutoTable.finalY + 6;
+  doc.autoTable({
+    startY: y, theme: "grid", styles: { fontSize: 10 }, headStyles: { fillColor: [17, 17, 17] },
+    head: [["Payment", "Bills", "Amount"]],
+    body: Object.entries(s.pay).map(([p, v]) => [p, v.count, rsPdf(v.total)]),
+    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" } }
+  });
+  y = doc.lastAutoTable.finalY + 6;
+  const body = [];
+  for (const g of s.groups) {
+    body.push([{ content: g.title.toUpperCase(), colSpan: 4, styles: { fillColor: CAT_RGB[g.key], textColor: 255, fontStyle: "bold" } }]);
+    for (const l of g.lines) body.push([l.name, rsPdf(l.price), l.qty, rsPdf(l.total)]);
+    body.push([{ content: g.title + " total", styles: { fontStyle: "bold" } }, "", { content: g.qty, styles: { fontStyle: "bold" } }, { content: rsPdf(g.total), styles: { fontStyle: "bold" } }]);
+  }
+  body.push([{ content: "GRAND TOTAL", styles: { fontStyle: "bold" } }, "", { content: s.items, styles: { fontStyle: "bold" } }, { content: rsPdf(s.total), styles: { fontStyle: "bold" } }]);
+  doc.autoTable({
+    startY: y, theme: "grid", styles: { fontSize: 10 }, headStyles: { fillColor: [17, 17, 17] },
+    head: [["Item", "Price", "Qty", "Amount"]], body,
+    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" } }
+  });
+  y = doc.lastAutoTable.finalY + 6;
+  const hours = Object.keys(s.hours).map(Number).sort((a, b) => a - b);
+  doc.autoTable({
+    startY: y, theme: "grid", styles: { fontSize: 10 }, headStyles: { fillColor: [17, 17, 17] },
+    head: [["Hour", "Bills", "Amount"]],
+    body: hours.map(h => [hourLabel(h).replace("–", " - "), s.hours[h].count, rsPdf(s.hours[h].total)]),
+    columnStyles: { 1: { halign: "right" }, 2: { halign: "right" } }
+  });
+  doc.save(fileBase() + "-sales-report.pdf");
+}
+
+function allBillsPdf() {
+  const doc = newPdf(); if (!doc) return;
+  const orders = dayOrders(), s = summarize(orders);
+  let y = pdfHeader(doc, `All bills (${s.count} bills, ${rsPdf(s.total)})`);
+  for (const o of orders) {
+    if (y > 250) { doc.addPage(); y = 15; }
+    const body = [];
+    const groups = [...CATS.map(c => c.key), "other"].map(k => ({ k, lines: (o.items || []).filter(i => catOf(i) === k) })).filter(g => g.lines.length);
+    for (const g of groups) {
+      body.push([{ content: catTitle(g.k).toUpperCase(), colSpan: 4, styles: { fillColor: [243, 244, 246], fontStyle: "bold", fontSize: 8 } }]);
+      for (const i of g.lines) body.push([i.name, i.qty, rsPdf(i.price), rsPdf(i.qty * i.price)]);
+    }
+    body.push([{ content: "TOTAL", styles: { fontStyle: "bold" } }, "", "", { content: rsPdf(o.total), styles: { fontStyle: "bold" } }]);
+    if (o.tendered != null) body.push(["Cash paid / change", "", rsPdf(o.tendered), rsPdf(o.change)]);
+    doc.autoTable({
+      startY: y, theme: "grid", styles: { fontSize: 9, cellPadding: 1.5 },
+      headStyles: { fillColor: [17, 17, 17], fontSize: 10 },
+      head: [[{ content: `Order #${o.seq}   ·   ${o.billNo}   ·   ${fmtTime(o.createdAt)}   ·   ${o.payment}`, colSpan: 4 }], ["Item", "Qty", "Rate", "Amount"]],
+      body,
+      columnStyles: { 1: { halign: "right", cellWidth: 15 }, 2: { halign: "right", cellWidth: 30 }, 3: { halign: "right", cellWidth: 35 } },
+      rowPageBreak: "avoid"
+    });
+    y = doc.lastAutoTable.finalY + 6;
+  }
+  doc.save(fileBase() + "-all-bills.pdf");
+}
+
+function csvCell(v) {
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function downloadCsv(rows, name) {
+  const text = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function billsCsv() {
+  const rows = [["Order no", "Bill no", "Date", "Time", "Payment", "Items count", "Order details", "Total", "Cash paid", "Change", "Kitchen status"]];
+  for (const o of dayOrders()) {
+    const d = new Date(o.createdAt);
+    rows.push([o.seq, o.billNo, localDay(d), fmtTime(o.createdAt), o.payment, (o.items || []).reduce((a, i) => a + i.qty, 0),
+      itemsText(o), o.total, o.tendered ?? "", o.change ?? "", o.kitchenDone ? "done" : "open"]);
+  }
+  downloadCsv(rows, fileBase() + "-bills.csv");
+}
+
+function linesCsv() {
+  const rows = [["Order no", "Bill no", "Date", "Time", "Payment", "Category", "Item", "Qty", "Rate", "Amount"]];
+  for (const o of dayOrders()) {
+    const d = new Date(o.createdAt);
+    for (const i of o.items || []) rows.push([o.seq, o.billNo, localDay(d), fmtTime(o.createdAt), o.payment, catTitle(catOf(i)), i.name, i.qty, i.price, i.qty * i.price]);
+  }
+  downloadCsv(rows, fileBase() + "-line-items.csv");
+}
+
+function loadLocal() {
+  try { all = JSON.parse(localStorage.getItem("vita_orders") || "[]"); } catch { all = []; }
+  render();
+}
+
+async function initFirebase() {
+  const appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+  const rt = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js");
+  const db = rt.getDatabase(appMod.initializeApp(FIREBASE_CONFIG));
+  rt.onValue(rt.ref(db, "orders"), snap => {
+    const list = [];
+    snap.forEach(c => { list.push({ ...c.val(), key: c.key, items: c.val().items || [] }); });
+    all = list;
+    render();
+  }, err => {
+    console.error(err);
+    $("#mode").textContent = "firebase error";
+    $("#mode").className = "pill warn";
+  });
+  rt.onValue(rt.ref(db, ".info/connected"), snap => {
+    $("#mode").textContent = snap.val() ? "live" : "offline";
+    $("#mode").className = "pill " + (snap.val() ? "live" : "warn");
+  });
+}
+
+function start() {
+  $("#app").hidden = false;
+  $("#day").value = localDay(new Date());
+  $("#day").addEventListener("change", render);
+  $("#pdfReport").addEventListener("click", salesReportPdf);
+  $("#pdfBills").addEventListener("click", allBillsPdf);
+  $("#csvBills").addEventListener("click", billsCsv);
+  $("#csvLines").addEventListener("click", linesCsv);
+  render();
+  if (FIREBASE_CONFIG) {
+    initFirebase().catch(e => { console.error(e); $("#mode").textContent = "firebase failed"; $("#mode").className = "pill warn"; });
+  } else {
+    $("#mode").textContent = "this computer only";
+    $("#mode").className = "pill warn";
+    loadLocal();
+    window.addEventListener("storage", e => { if (e.key === "vita_orders") loadLocal(); });
+  }
+}
+
+if (ADMIN_PIN && sessionStorage.getItem("vita_admin") !== "1") {
+  $("#gate").hidden = false;
+  $("#gateForm").addEventListener("submit", e => {
+    e.preventDefault();
+    if ($("#pin").value === String(ADMIN_PIN)) {
+      sessionStorage.setItem("vita_admin", "1");
+      $("#gate").hidden = true;
+      start();
+    } else {
+      $("#gateErr").textContent = "Wrong PIN";
+      $("#pin").value = "";
+    }
+  });
+} else {
+  start();
+}
+</script>
+</body>
+</html>
