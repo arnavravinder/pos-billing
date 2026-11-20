@@ -41,7 +41,8 @@ main{display:grid;grid-template-columns:1fr 380px;gap:12px;padding:12px;height:c
 .status{font-size:12px;color:#666;margin-top:8px;min-height:16px}
 details{margin-top:8px;font-size:13px}
 details .grid{display:grid;grid-template-columns:1fr 80px;gap:6px;margin-top:8px;align-items:center}
-details input{width:100%;padding:4px}
+details input,details select{width:100%;padding:4px}
+details .grid{grid-template-columns:1fr 120px}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.show{opacity:1}
 #printFrame{position:fixed;left:-10000px;top:0;width:80mm;height:2000px;border:0;visibility:hidden}
@@ -73,9 +74,10 @@ details input{width:100%;padding:4px}
 <details>
 <summary>Printer calibration</summary>
 <div class="grid">
+<label for="cMode">Page size</label><select id="cMode"><option value="printer">Printer paper</option><option value="fit">Fit to bill</option></select>
 <label for="cPaper">Paper width (mm)</label><input id="cPaper" type="number" step="0.5">
 <label for="cContent">Print width (mm)</label><input id="cContent" type="number" step="0.5">
-<label for="cLeft">Left offset (mm)</label><input id="cLeft" type="number" step="0.5">
+<label for="cLeft">Shift right (mm, − for left)</label><input id="cLeft" type="number" step="0.5">
 <label for="cFont">Font size (px)</label><input id="cFont" type="number" step="0.5">
 <label for="cFeed">Bottom feed (mm)</label><input id="cFeed" type="number" step="0.5">
 </div>
@@ -104,7 +106,7 @@ const STALL = {
 
 const FIREBASE_CONFIG = null;
 
-const DEFAULT_CAL = { paper: 58, content: 48, left: 0, font: 12, feed: 4 };
+const DEFAULT_CAL = { mode: "printer", paper: 58, content: 48, left: 0, font: 12, feed: 4 };
 
 const $ = s => document.querySelector(s);
 const cart = new Map();
@@ -118,6 +120,9 @@ function loadCal() {
 let cal = loadCal();
 
 function bindCal() {
+  const mode = document.getElementById("cMode");
+  mode.value = cal.mode;
+  mode.addEventListener("change", () => { cal.mode = mode.value; localStorage.setItem("vita_cal", JSON.stringify(cal)); });
   const map = { cPaper: "paper", cContent: "content", cLeft: "left", cFont: "font", cFeed: "feed" };
   for (const [id, key] of Object.entries(map)) {
     const el = document.getElementById(id);
@@ -222,8 +227,8 @@ function testBody() {
     <div class="edge"><span>|L</span><span>R|</span></div>
     <div class="fill"></div>
     <div>1234567890123456789012345678901234567890</div>
-    <div class="c">paper ${cal.paper}mm · print ${cal.content}mm</div>
-    <div class="c">left ${cal.left}mm · font ${cal.font}px</div>
+    <div class="c">${cal.mode} · paper ${cal.paper}mm · print ${cal.content}mm</div>
+    <div class="c">shift ${cal.left}mm · font ${cal.font}px</div>
     <div class="hr"></div>
     <div class="c">If both | marks print and the black bar fills edge to edge, width is right.</div>
     <div class="hr"></div>
@@ -235,11 +240,11 @@ function printHTML(bodyHTML) {
     const frame = $("#printFrame");
     const doc = frame.contentDocument;
     doc.open();
-    doc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><style id="pg">@page{size:${cal.paper}mm 200mm;margin:0}</style><style>
+    doc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><style id="pg">${cal.mode === "fit" ? `@page{size:${cal.paper}mm 200mm;margin:0}` : "@page{margin:0}"}</style><style>
       *{box-sizing:border-box;margin:0;padding:0}
       html,body{width:${cal.paper}mm;background:#fff;color:#000}
       body{font-family:"Courier New",Consolas,monospace;font-size:${cal.font}px;font-weight:700;line-height:1.25;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      #r{width:${cal.content}mm;margin-left:${cal.left}mm;padding-top:1mm;padding-bottom:${cal.feed}mm;overflow:hidden;word-wrap:break-word}
+      #r{width:${cal.content}mm;margin-left:${(cal.paper - cal.content) / 2 + cal.left}mm;padding-top:1mm;padding-bottom:${cal.feed}mm;overflow:hidden;word-wrap:break-word}
       .c{text-align:center}.r{text-align:right;white-space:nowrap}
       .big{font-size:1.45em;font-weight:900;letter-spacing:.5px}
       .sm{font-size:.85em;font-weight:600}
@@ -254,6 +259,10 @@ function printHTML(bodyHTML) {
     doc.close();
     const go = () => {
       const r = doc.getElementById("r");
+      if (cal.mode !== "fit") {
+        setTimeout(() => { frame.contentWindow.focus(); frame.contentWindow.print(); resolve(); }, 50);
+        return;
+      }
       const mm = Math.ceil(r.getBoundingClientRect().height * 25.4 / 96) + 1;
       doc.getElementById("pg").textContent = `@page{size:${cal.paper}mm ${mm + 1}mm;margin:0}`;
       for (const el of [doc.documentElement, doc.body]) {
