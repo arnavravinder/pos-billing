@@ -110,6 +110,7 @@ details .grid{grid-template-columns:1fr 120px}
 <div class="toast" id="toast"></div>
 <iframe id="printFrame" title="print"></iframe>
 
+<script src="firebase-config.js"></script>
 <script type="module">
 const CATEGORIES = [
   { key: "food", title: "Food", cls: "food" },
@@ -147,7 +148,7 @@ const STALL = {
   ]
 };
 
-const FIREBASE_CONFIG = null;
+const FIREBASE_CONFIG = window.FIREBASE_CONFIG || null;
 
 const DEFAULT_CAL = { mode: "printer", paper: 58, content: 48, left: 0, font: 12, feed: 4, tail: 12 };
 
@@ -391,7 +392,9 @@ async function placeOrder() {
     payment: payMode(),
     items: groupLines([...cart.values()]).flatMap(g => g.lines).map(l => ({ id: l.id, cat: l.cat, name: l.name, price: l.price, qty: l.qty })),
     total: cartTotal(),
-    synced: false
+    synced: false,
+    kitchenDone: false,
+    kitchenItems: []
   };
   const t = tendered();
   order.tendered = order.payment === "Cash" && t !== null ? t : null;

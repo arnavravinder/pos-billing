@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Vita · Kitchen</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;background:#0f172a;color:#f8fafc;user-select:none}
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#020617;border-bottom:1px solid #1e293b}
+header h1{margin:0;font-size:20px}
+.hright{display:flex;gap:10px;align-items:center;font-size:14px}
+.pill{padding:4px 10px;border-radius:999px;background:#1e293b}
+.pill.live{background:#14532d}
+.pill.warn{background:#7c2d12}
+.hbtn{padding:10px 14px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#f8fafc;font-size:14px;font-weight:600;cursor:pointer}
+main{padding:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;align-items:start}
+.card{background:#fff;color:#0f172a;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;border:4px solid transparent}
+.card.ready{border-color:#22c55e}
+.top{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#e2e8f0}
+.num{font-size:52px;font-weight:900;line-height:1}
+.num small{font-size:24px;font-weight:800;opacity:.6;margin-right:2px}
+.meta{text-align:right;font-size:14px;font-weight:600}
+.age{font-size:20px;font-weight:800}
+.age.amber{color:#b45309}
+.age.red{color:#dc2626}
+.sec{padding:4px 14px;font-size:13px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#fff}
+.sec.food{background:#c2410c}.sec.bev{background:#0369a1}.sec.des{background:#be185d}.sec.other{background:#475569}
+.it{display:flex;align-items:center;gap:12px;padding:14px;border-bottom:1px solid #e2e8f0;cursor:pointer;font-size:20px;font-weight:700;min-height:62px}
+.it:active{background:#f1f5f9}
+.box{width:30px;height:30px;border:3px solid #94a3b8;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff}
+.q{min-width:44px;font-size:22px;font-weight:900}
+.it.done{color:#94a3b8;text-decoration:line-through;background:#f0fdf4}
+.it.done .box{background:#22c55e;border-color:#22c55e}
+.complete{margin:12px;padding:18px;font-size:20px;font-weight:800;border:0;border-radius:12px;background:#16a34a;color:#fff;cursor:pointer}
+.complete:active{transform:scale(.98)}
+.card:not(.ready) .complete{background:#334155}
+.empty{grid-column:1/-1;text-align:center;color:#64748b;font-size:22px;padding:80px 0}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#f8fafc;color:#0f172a;padding:12px 16px;border-radius:10px;font-size:16px;font-weight:600;display:flex;gap:14px;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+.toast button{padding:10px 16px;border:0;border-radius:8px;background:#0f172a;color:#fff;font-weight:700;font-size:15px;cursor:pointer}
+</style>
+</head>
+<body>
+<header>
+<h1>Kitchen · Project Vita</h1>
+<div class="hright">
+<span id="count" class="pill">0 open</span>
+<span id="mode" class="pill">connecting…</span>
+<button class="hbtn" id="recallBtn">Recall last</button>
+<button class="hbtn" id="fsBtn">Full screen</button>
+</div>
+</header>
+<main id="board"></main>
+<div class="toast" id="toast" hidden><span id="toastMsg"></span><button id="undoBtn">Undo</button></div>
+
+<script src="firebase-config.js"></script>
+<script type="module">
+const CATS = [
+  { key: "food", title: "Food" },
+  { key: "bev", title: "Beverages" },
+  { key: "des", title: "Desserts" }
+];
+const FIREBASE_CONFIG = window.FIREBASE_CONFIG || null;
+
+const $ = s => document.querySelector(s);
+let orders = [];
+let db = null, fs = null;
+let known = null;
+let lastCompleted = [];
+let toastTimer = null;
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function keyOf(o) { return o.billNo + "_" + Date.parse(o.createdAt); }
+
+function localKds() {
+  try { return JSON.parse(localStorage.getItem("vita_kds") || "{}"); } catch { return {}; }
+}
+function saveLocalKds(k) { localStorage.setItem("vita_kds", JSON.stringify(k)); }
+
+function loadLocal() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem("vita_orders") || "[]"); } catch {}
+  const k = localKds();
+  setOrders(list.map(o => {
+    const key = keyOf(o);
+    const st = k[key] || {};
+    return { ...o, key, kitchenItems: st.items || [], kitchenDone: !!st.done };
+  }).filter(o => !o.kitchenDone));
+}
+
+function setOrders(list) {
+  list.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  const keys = new Set(list.map(o => o.key));
+  if (known && list.some(o => !known.has(o.key))) beep();
+  known = keys;
+  orders = list;
+  render();
+}
+
+function ageText(o) {
+  const s = Math.max(0, Math.floor((Date.now() - Date.parse(o.createdAt)) / 1000));
+  const m = Math.floor(s / 60);
+  return { text: m + ":" + String(s % 60).padStart(2, "0"), cls: m >= 10 ? "red" : m >= 5 ? "amber" : "" };
+}
+
+function grouped(items) {
+  const withIdx = items.map((it, i) => ({ ...it, i }));
+  const groups = CATS.map(c => ({ ...c, lines: withIdx.filter(x => x.cat === c.key) }));
+  const other = withIdx.filter(x => !CATS.some(c => c.key === x.cat));
+  if (other.length) groups.push({ key: "other", title: "Items", lines: other });
+  return groups.filter(g => g.lines.length);
+}
+
+function render() {
+  const board = $("#board");
+  $("#count").textContent = orders.length + " open";
+  if (!orders.length) {
+    board.innerHTML = `<div class="empty">No open orders</div>`;
+    return;
+  }
+  board.innerHTML = "";
+  for (const o of orders) {
+    const done = new Set(o.kitchenItems || []);
+    const ready = o.items.length > 0 && o.items.every((_, i) => done.has(i));
+    const age = ageText(o);
+    const card = document.createElement("div");
+    card.className = "card" + (ready ? " ready" : "");
+    card.innerHTML = `
+      <div class="top">
+        <div class="num"><small>#</small>${esc(o.seq ?? o.billNo)}</div>
+        <div class="meta"><div class="age ${age.cls}" data-age="${esc(o.key)}">${age.text}</div><div>${esc(o.payment || "")}</div></div>
+      </div>
+      ${grouped(o.items).map(g => `
+        <div class="sec ${g.key}">${esc(g.title)}</div>
+        ${g.lines.map(l => `
+          <div class="it${done.has(l.i) ? " done" : ""}" data-i="${l.i}">
+            <div class="box">${done.has(l.i) ? "✓" : ""}</div>
+            <div class="q">${l.qty}×</div>
+            <div>${esc(l.name)}</div>
+          </div>`).join("")}`).join("")}
+      <button class="complete">${ready ? "Order complete ✓" : "Mark whole order complete"}</button>`;
+    card.querySelectorAll(".it").forEach(el => el.addEventListener("click", () => toggleItem(o, parseInt(el.dataset.i, 10))));
+    card.querySelector(".complete").addEventListener("click", () => completeOrder(o));
+    board.appendChild(card);
+  }
+}
+
+function tickAges() {
+  for (const o of orders) {
+    const el = document.querySelector(`[data-age="${CSS.escape(o.key)}"]`);
+    if (!el) continue;
+    const a = ageText(o);
+    el.textContent = a.text;
+    el.className = "age " + a.cls;
+  }
+}
+
+async function toggleItem(o, i) {
+  const set = new Set(o.kitchenItems || []);
+  const adding = !set.has(i);
+  adding ? set.add(i) : set.delete(i);
+  o.kitchenItems = [...set];
+  render();
+  if (db) {
+    try {
+      await fs.updateDoc(fs.doc(db, "orders", o.key), { kitchenItems: adding ? fs.arrayUnion(i) : fs.arrayRemove(i) });
+    } catch (e) { console.error(e); }
+  } else {
+    const k = localKds();
+    k[o.key] = { ...(k[o.key] || {}), items: o.kitchenItems };
+    saveLocalKds(k);
+  }
+}
+
+async function setDone(o, val) {
+  if (db) {
+    try {
+      await fs.updateDoc(fs.doc(db, "orders", o.key), { kitchenDone: val, kitchenDoneAt: val ? fs.serverTimestamp() : null });
+    } catch (e) { console.error(e); }
+  } else {
+    const k = localKds();
+    k[o.key] = { ...(k[o.key] || {}), done: val };
+    saveLocalKds(k);
+    loadLocal();
+  }
+}
+
+async function completeOrder(o) {
+  orders = orders.filter(x => x.key !== o.key);
+  known && known.delete(o.key);
+  render();
+  lastCompleted.push(o);
+  if (lastCompleted.length > 20) lastCompleted.shift();
+  showToast(`Order #${o.seq ?? o.billNo} done`);
+  await setDone(o, true);
+}
+
+async function recall() {
+  const o = lastCompleted.pop();
+  if (!o) return;
+  hideToast();
+  if (known) known.add(o.key);
+  if (!db) { await setDone(o, false); return; }
+  orders.push(o);
+  setOrders(orders);
+  await setDone(o, false);
+}
+
+function showToast(msg) {
+  $("#toastMsg").textContent = msg;
+  $("#toast").hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 6000);
+}
+function hideToast() { $("#toast").hidden = true; }
+
+let audio = null;
+function beep() {
+  try {
+    audio = audio || new AudioContext();
+    const t = audio.currentTime;
+    for (const [f, d] of [[880, 0], [1175, 0.18]]) {
+      const osc = audio.createOscillator(), g = audio.createGain();
+      osc.frequency.value = f;
+      g.gain.setValueAtTime(0.25, t + d);
+      g.gain.exponentialRampToValueAtTime(0.001, t + d + 0.3);
+      osc.connect(g).connect(audio.destination);
+      osc.start(t + d);
+      osc.stop(t + d + 0.3);
+    }
+  } catch {}
+}
+
+async function initFirebase() {
+  const appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+  fs = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+  const app = appMod.initializeApp(FIREBASE_CONFIG);
+  db = fs.getFirestore(app);
+  fs.onSnapshot(fs.query(fs.collection(db, "orders"), fs.where("kitchenDone", "==", false)), snap => {
+    setOrders(snap.docs.map(d => ({ ...d.data(), key: d.id, kitchenItems: d.data().kitchenItems || [] })));
+    $("#mode").textContent = "live";
+    $("#mode").className = "pill live";
+  }, err => {
+    console.error(err);
+    $("#mode").textContent = "firebase error";
+    $("#mode").className = "pill warn";
+  });
+}
+
+$("#undoBtn").addEventListener("click", recall);
+$("#recallBtn").addEventListener("click", recall);
+$("#fsBtn").addEventListener("click", () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen());
+document.addEventListener("pointerdown", () => { if (!audio) try { audio = new AudioContext(); } catch {} }, { once: true });
+setInterval(tickAges, 1000);
+
+if (FIREBASE_CONFIG) {
+  initFirebase().catch(e => {
+    console.error(e);
+    $("#mode").textContent = "firebase failed";
+    $("#mode").className = "pill warn";
+  });
+} else {
+  $("#mode").textContent = "this computer only";
+  $("#mode").className = "pill warn";
+  loadLocal();
+  window.addEventListener("storage", e => { if (e.key === "vita_orders" || e.key === "vita_kds") loadLocal(); });
+  setInterval(loadLocal, 3000);
+}
+</script>
+</body>
+</html>
