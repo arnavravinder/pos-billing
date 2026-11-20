@@ -80,6 +80,7 @@ details .grid{grid-template-columns:1fr 120px}
 <label for="cLeft">Shift right (mm, − for left)</label><input id="cLeft" type="number" step="0.5">
 <label for="cFont">Font size (px)</label><input id="cFont" type="number" step="0.5">
 <label for="cFeed">Bottom feed (mm)</label><input id="cFeed" type="number" step="0.5">
+<label for="cTail">Gap before tear line (mm)</label><input id="cTail" type="number" step="1">
 </div>
 </details>
 </div>
@@ -100,13 +101,17 @@ const MENU = [
 
 const STALL = {
   name: "PROJECT VITA",
-  tagline: "Every purchase supports our charity work",
-  footer: "Thank you!"
+  tagline: "Sports Day Stall",
+  footer: [
+    "THANK YOU FOR SHOPPING WITH US!",
+    "All proceeds are donated to Parikrama",
+    "Please give this token to staff"
+  ]
 };
 
 const FIREBASE_CONFIG = null;
 
-const DEFAULT_CAL = { mode: "printer", paper: 58, content: 48, left: 0, font: 12, feed: 4 };
+const DEFAULT_CAL = { mode: "printer", paper: 58, content: 48, left: 0, font: 12, feed: 4, tail: 12 };
 
 const $ = s => document.querySelector(s);
 const cart = new Map();
@@ -123,7 +128,7 @@ function bindCal() {
   const mode = document.getElementById("cMode");
   mode.value = cal.mode;
   mode.addEventListener("change", () => { cal.mode = mode.value; localStorage.setItem("vita_cal", JSON.stringify(cal)); });
-  const map = { cPaper: "paper", cContent: "content", cLeft: "left", cFont: "font", cFeed: "feed" };
+  const map = { cPaper: "paper", cContent: "content", cLeft: "left", cFont: "font", cFeed: "feed", cTail: "tail" };
   for (const [id, key] of Object.entries(map)) {
     const el = document.getElementById(id);
     el.value = cal[key];
@@ -217,7 +222,9 @@ function receiptBody(o) {
     <div class="kv"><span>Items</span><span>${o.items.reduce((a, i) => a + i.qty, 0)}</span></div>
     <div class="kv tot"><span>TOTAL</span><span>Rs ${o.total.toFixed(2)}</span></div>
     <div class="hr"></div>
-    <div class="c">${esc(STALL.footer)}</div>`;
+    ${STALL.footer.map(l => `<div class="c ft">${esc(l)}</div>`).join("")}
+    <div style="height:${cal.tail}mm"></div>
+    <div class="cut"></div>`;
 }
 
 function testBody() {
@@ -254,6 +261,8 @@ function printHTML(bodyHTML) {
       .nm{padding-top:.6mm}.sub{padding-left:2mm}
       .tot{font-size:1.3em;font-weight:900;padding-top:.8mm}
       .edge{display:flex;justify-content:space-between}
+      .ft{margin-top:.8mm}
+      .cut{border-top:2px dashed #000;margin-top:1mm}
       .fill{height:3mm;background:#000;margin:1mm 0}
     </style></head><body><div id="r">${bodyHTML}</div></body></html>`);
     doc.close();
