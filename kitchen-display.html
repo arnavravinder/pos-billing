@@ -65,7 +65,7 @@ const FIREBASE_CONFIG = window.FIREBASE_CONFIG || null;
 
 const $ = s => document.querySelector(s);
 let orders = [];
-let db = null, fs = null;
+let db = null, rt = null;
 let known = null;
 let lastCompleted = [];
 let toastTimer = null;
@@ -88,7 +88,7 @@ function loadLocal() {
   setOrders(list.map(o => {
     const key = keyOf(o);
     const st = k[key] || {};
-    return { ...o, key, kitchenItems: st.items || [], kitchenDone: !!st.done };
+    return { ...o, key, kitchenItems: st.items || {}, kitchenDone: !!st.done };
   }).filter(o => !o.kitchenDone));
 }
 
@@ -115,6 +115,14 @@ function grouped(items) {
   return groups.filter(g => g.lines.length);
 }
 
+function doneSet(o) {
+  const k = o.kitchenItems || {};
+  const out = new Set();
+  if (Array.isArray(k)) k.forEach((v, i) => { if (typeof v === "number") out.add(v); else if (v) out.add(i); });
+  else for (const [key, v] of Object.entries(k)) if (v) out.add(parseInt(String(key).replace(/^i/, ""), 10));
+  return out;
+}
+
 function render() {
   const board = $("#board");
   $("#count").textContent = orders.length + " open";
@@ -124,7 +132,7 @@ function render() {
   }
   board.innerHTML = "";
   for (const o of orders) {
-    const done = new Set(o.kitchenItems || []);
+    const done = doneSet(o);
     const ready = o.items.length > 0 && o.items.every((_, i) => done.has(i));
     const age = ageText(o);
     const card = document.createElement("div");
@@ -160,14 +168,14 @@ function tickAges() {
 }
 
 async function toggleItem(o, i) {
-  const set = new Set(o.kitchenItems || []);
+  const set = doneSet(o);
   const adding = !set.has(i);
   adding ? set.add(i) : set.delete(i);
-  o.kitchenItems = [...set];
+  o.kitchenItems = Object.fromEntries([...set].map(x => ["i" + x, true]));
   render();
   if (db) {
     try {
-      await fs.updateDoc(fs.doc(db, "orders", o.key), { kitchenItems: adding ? fs.arrayUnion(i) : fs.arrayRemove(i) });
+      await rt.update(rt.ref(db, "orders/" + o.key + "/kitchenItems"), { ["i" + i]: adding ? true : null });
     } catch (e) { console.error(e); }
   } else {
     const k = localKds();
@@ -179,7 +187,7 @@ async function toggleItem(o, i) {
 async function setDone(o, val) {
   if (db) {
     try {
-      await fs.updateDoc(fs.doc(db, "orders", o.key), { kitchenDone: val, kitchenDoneAt: val ? fs.serverTimestamp() : null });
+      await rt.update(rt.ref(db, "orders/" + o.key), { kitchenDone: val, kitchenDoneAt: val ? rt.serverTimestamp() : null });
     } catch (e) { console.error(e); }
   } else {
     const k = localKds();
@@ -237,17 +245,22 @@ function beep() {
 
 async function initFirebase() {
   const appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
-  fs = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+  rt = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js");
   const app = appMod.initializeApp(FIREBASE_CONFIG);
-  db = fs.getFirestore(app);
-  fs.onSnapshot(fs.query(fs.collection(db, "orders"), fs.where("kitchenDone", "==", false)), snap => {
-    setOrders(snap.docs.map(d => ({ ...d.data(), key: d.id, kitchenItems: d.data().kitchenItems || [] })));
-    $("#mode").textContent = "live";
-    $("#mode").className = "pill live";
+  db = rt.getDatabase(app);
+  const q = rt.query(rt.ref(db, "orders"), rt.orderByChild("kitchenDone"), rt.equalTo(false));
+  rt.onValue(q, snap => {
+    const list = [];
+    snap.forEach(c => { list.push({ ...c.val(), key: c.key, items: c.val().items || [] }); });
+    setOrders(list);
   }, err => {
     console.error(err);
     $("#mode").textContent = "firebase error";
     $("#mode").className = "pill warn";
+  });
+  rt.onValue(rt.ref(db, ".info/connected"), snap => {
+    $("#mode").textContent = snap.val() ? "live" : "offline";
+    $("#mode").className = "pill " + (snap.val() ? "live" : "warn");
   });
 }
 

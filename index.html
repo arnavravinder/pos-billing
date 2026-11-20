@@ -155,7 +155,7 @@ const DEFAULT_CAL = { mode: "printer", paper: 58, content: 48, left: 0, font: 12
 const $ = s => document.querySelector(s);
 const cart = new Map();
 const rupee = n => "₹" + Number(n).toLocaleString("en-IN");
-let db = null, fs = null;
+let db = null, rt = null, serverSeq = null, placing = false;
 
 function loadCal() {
   try { return { ...DEFAULT_CAL, ...JSON.parse(localStorage.getItem("vita_cal") || "{}") }; }
@@ -182,7 +182,23 @@ function getOrders() {
   try { return JSON.parse(localStorage.getItem("vita_orders") || "[]"); } catch { return []; }
 }
 function saveOrders(list) { localStorage.setItem("vita_orders", JSON.stringify(list)); }
-function nextBillNo() { return (parseInt(localStorage.getItem("vita_billno") || "0", 10) + 1); }
+function localNext() { return (parseInt(localStorage.getItem("vita_billno") || "0", 10) + 1); }
+function nextBillNo() { return db && serverSeq !== null ? serverSeq + 1 : localNext(); }
+function orderKey(o) { return o.billNo + "_" + Date.parse(o.createdAt); }
+
+async function claimSeq() {
+  const fallback = nextBillNo();
+  if (db) {
+    try {
+      const res = await Promise.race([
+        rt.runTransaction(rt.ref(db, "counters/seq"), v => (v || 0) + 1),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000))
+      ]);
+      if (res && res.committed) return res.snapshot.val();
+    } catch (e) { console.error(e); }
+  }
+  return fallback;
+}
 function fmtBill(n) { return "V-" + String(n).padStart(4, "0"); }
 
 function toast(msg) {
@@ -383,8 +399,15 @@ function printHTML(bodyHTML) {
 }
 
 async function placeOrder() {
-  if (!cart.size) return;
-  const n = nextBillNo();
+  if (!cart.size || placing) return;
+  placing = true;
+  $("#placeBtn").disabled = true;
+  $("#placeBtn").textContent = "Placing…";
+  let n;
+  try { n = await claimSeq(); } finally {
+    placing = false;
+    $("#placeBtn").textContent = "Place order & print";
+  }
   const order = {
     billNo: fmtBill(n),
     seq: n,
@@ -394,12 +417,12 @@ async function placeOrder() {
     total: cartTotal(),
     synced: false,
     kitchenDone: false,
-    kitchenItems: []
+    kitchenItems: {}
   };
   const t = tendered();
   order.tendered = order.payment === "Cash" && t !== null ? t : null;
   order.change = order.tendered !== null ? order.tendered - order.total : null;
-  localStorage.setItem("vita_billno", String(n));
+  localStorage.setItem("vita_billno", String(Math.max(n, localNext() - 1)));
   const list = getOrders();
   list.push(order);
   saveOrders(list);
@@ -418,11 +441,17 @@ async function initFirebase() {
   if (!FIREBASE_CONFIG) return;
   try {
     const appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
-    fs = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+    rt = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js");
     const app = appMod.initializeApp(FIREBASE_CONFIG);
-    db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache() });
-    $("#fbState").textContent = "firebase on";
-    syncPending();
+    db = rt.getDatabase(app);
+    rt.onValue(rt.ref(db, "counters/seq"), snap => {
+      serverSeq = snap.val() || 0;
+      $("#nextBill").textContent = "Next bill " + fmtBill(nextBillNo());
+    });
+    rt.onValue(rt.ref(db, ".info/connected"), snap => {
+      $("#fbState").textContent = snap.val() ? "firebase live" : "offline, will sync";
+      if (snap.val()) syncPending();
+    });
   } catch (e) {
     console.error(e);
     $("#fbState").textContent = "firebase failed, saving locally";
@@ -432,9 +461,11 @@ async function initFirebase() {
 async function syncOrder(order) {
   if (!db) return;
   try {
-    await fs.setDoc(fs.doc(db, "orders", order.billNo + "_" + Date.parse(order.createdAt)), {
-      ...order, synced: true, serverTime: fs.serverTimestamp()
-    });
+    const stale = Date.now() - Date.parse(order.createdAt) > 15 * 60 * 1000;
+    const data = JSON.parse(JSON.stringify({ ...order, synced: true }));
+    if (stale) data.kitchenDone = true;
+    data.serverTime = rt.serverTimestamp();
+    await rt.set(rt.ref(db, "orders/" + orderKey(order)), data);
     const list = getOrders();
     const o = list.find(x => x.billNo === order.billNo && x.createdAt === order.createdAt);
     if (o) { o.synced = true; saveOrders(list); }
@@ -443,8 +474,12 @@ async function syncOrder(order) {
   }
 }
 
+let syncing = false;
 async function syncPending() {
-  for (const o of getOrders().filter(x => !x.synced)) await syncOrder(o);
+  if (syncing) return;
+  syncing = true;
+  try { for (const o of getOrders().filter(x => !x.synced)) await syncOrder(o); }
+  finally { syncing = false; }
 }
 
 $("#placeBtn").addEventListener("click", placeOrder);
