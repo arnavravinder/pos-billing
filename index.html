@@ -6,16 +6,30 @@
 <title>Project Vita POS</title>
 <style>
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;background:#f3f4f6;color:#111}
 header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#111;color:#fff}
 header h1{font-size:18px;margin:0}
 header .meta{font-size:13px;opacity:.8}
 main{display:grid;grid-template-columns:1fr 380px;gap:12px;padding:12px;height:calc(100vh - 46px)}
-.menu{overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-content:start}
-.item{background:#fff;border:2px solid #e5e7eb;border-radius:10px;padding:14px;text-align:left;cursor:pointer;font-size:15px;position:relative;user-select:none}
-.item:active{transform:scale(.98)}
-.item .price{color:#555;font-size:14px;margin-top:6px}
-.item .badge{position:absolute;top:6px;right:8px;background:#111;color:#fff;border-radius:999px;font-size:12px;padding:2px 8px}
+.menu{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;min-height:0;overflow:auto}
+.cat{display:flex;flex-direction:column;gap:8px;min-width:0}
+.cat h3{margin:0;font-size:14px;text-transform:uppercase;letter-spacing:.5px;padding:6px 10px;border-radius:8px;color:#fff}
+.cat .items{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.item{border:2px solid;border-radius:10px;padding:10px 12px;text-align:left;cursor:pointer;font-size:14px;font-weight:600;position:relative;user-select:none;min-height:64px;line-height:1.2}
+.item:active{transform:scale(.97)}
+.item .price{font-size:14px;font-weight:500;margin-top:4px;opacity:.75}
+.item .badge{position:absolute;top:-8px;right:-6px;background:#111;color:#fff;border-radius:999px;font-size:13px;padding:2px 9px}
+.food h3{background:#c2410c}.food .item{background:#fff1e6;border-color:#fdba74}
+.bev h3{background:#0369a1}.bev .item{background:#e0f2fe;border-color:#7dd3fc}
+.des h3{background:#be185d}.des .item{background:#fce7f3;border-color:#f9a8d4}
+.cashbox{margin-bottom:10px}
+.cashbox .in{display:flex;gap:6px;align-items:center}
+.cashbox input{flex:1;font-size:20px;padding:8px 10px;border:2px solid #ddd;border-radius:8px;width:100%}
+.quick{display:flex;gap:6px;margin-top:6px}
+.quick button{flex:1;padding:8px 0;border:1px solid #ccc;background:#fafafa;border-radius:6px;font-weight:600;cursor:pointer}
+.change{display:flex;justify-content:space-between;font-size:20px;font-weight:700;margin-top:8px;padding:8px 10px;border-radius:8px;background:#f0fdf4;color:#166534}
+.change.short{background:#fef2f2;color:#b91c1c}
 .cart{background:#fff;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;border:1px solid #e5e7eb}
 .cart h2{margin:0;padding:12px 14px;font-size:16px;border-bottom:1px solid #eee}
 .lines{flex:1;overflow:auto}
@@ -64,6 +78,11 @@ details .grid{grid-template-columns:1fr 120px}
 <label><input type="radio" name="pay" value="Cash" checked><span>Cash</span></label>
 <label><input type="radio" name="pay" value="UPI"><span>UPI</span></label>
 </div>
+<div class="cashbox" id="cashbox">
+<div class="in"><input id="tendered" type="number" inputmode="numeric" min="0" placeholder="Cash received ₹"></div>
+<div class="quick"><button data-q="exact">Exact</button><button data-q="100">₹100</button><button data-q="200">₹200</button><button data-q="500">₹500</button></div>
+<div class="change" id="change" hidden><span id="changeLbl">Change</span><span id="changeAmt">₹0</span></div>
+</div>
 <button class="btn primary" id="placeBtn" disabled>Place order &amp; print</button>
 <div class="row">
 <button class="btn ghost" id="clearBtn">Clear</button>
@@ -90,13 +109,30 @@ details .grid{grid-template-columns:1fr 120px}
 <iframe id="printFrame" title="print"></iframe>
 
 <script type="module">
+const CATEGORIES = [
+  { key: "food", title: "Food", cls: "food" },
+  { key: "bev", title: "Beverages", cls: "bev" },
+  { key: "des", title: "Desserts", cls: "des" }
+];
+
 const MENU = [
-  { id: "m1", name: "Item 1", price: 50 },
-  { id: "m2", name: "Item 2", price: 80 },
-  { id: "m3", name: "Item 3", price: 100 },
-  { id: "m4", name: "Item 4", price: 120 },
-  { id: "m5", name: "Item 5", price: 30 },
-  { id: "m6", name: "Item 6", price: 150 }
+  { id: "f1", cat: "food", name: "Butter Popcorn", price: 100 },
+  { id: "f2", cat: "food", name: "Cheese Popcorn", price: 120 },
+  { id: "f3", cat: "food", name: "Nachos and Salsa", price: 150 },
+  { id: "f4", cat: "food", name: "French Fries", price: 150 },
+  { id: "f5", cat: "food", name: "Peri Peri Fries", price: 170 },
+  { id: "f6", cat: "food", name: "Veg Momos (5 pc)", price: 170 },
+  { id: "f7", cat: "food", name: "Chicken Momos (5 pc)", price: 200 },
+  { id: "f8", cat: "food", name: "Chicken Nuggets (5 pc)", price: 200 },
+  { id: "b1", cat: "bev", name: "Lemonade", price: 50 },
+  { id: "b2", cat: "bev", name: "Lime Soda", price: 50 },
+  { id: "b3", cat: "bev", name: "Gatorade (Cup)", price: 70 },
+  { id: "b4", cat: "bev", name: "Blue Lagoon", price: 100 },
+  { id: "b5", cat: "bev", name: "Lemon Ice Tea", price: 100 },
+  { id: "d1", cat: "des", name: "Ice Pop", price: 70 },
+  { id: "d2", cat: "des", name: "Ice Cream Sandwich", price: 100 },
+  { id: "d3", cat: "des", name: "Brownie Ice Cream Sundae", price: 200 },
+  { id: "d4", cat: "des", name: "Extra Toppings", price: 50 }
 ];
 
 const STALL = {
@@ -157,13 +193,20 @@ function toast(msg) {
 function renderMenu() {
   const m = $("#menu");
   m.innerHTML = "";
-  for (const item of MENU) {
-    const b = document.createElement("button");
-    b.className = "item";
-    const q = cart.get(item.id)?.qty || 0;
-    b.innerHTML = `<div>${esc(item.name)}</div><div class="price">${rupee(item.price)}</div>${q ? `<span class="badge">${q}</span>` : ""}`;
-    b.addEventListener("click", () => changeQty(item, 1));
-    m.appendChild(b);
+  for (const c of CATEGORIES) {
+    const col = document.createElement("div");
+    col.className = "cat " + c.cls;
+    col.innerHTML = `<h3>${esc(c.title)}</h3><div class="items"></div>`;
+    const grid = col.querySelector(".items");
+    for (const item of MENU.filter(i => i.cat === c.key)) {
+      const b = document.createElement("button");
+      b.className = "item";
+      const q = cart.get(item.id)?.qty || 0;
+      b.innerHTML = `<div>${esc(item.name)}</div><div class="price">${rupee(item.price)}</div>${q ? `<span class="badge">${q}</span>` : ""}`;
+      b.addEventListener("click", () => changeQty(item, 1));
+      grid.appendChild(b);
+    }
+    m.appendChild(col);
   }
 }
 
@@ -195,8 +238,33 @@ function render() {
     box.appendChild(row);
   }
   $("#total").textContent = rupee(cartTotal());
-  $("#placeBtn").disabled = !cart.size;
+  updateChange();
   $("#nextBill").textContent = "Next bill " + fmtBill(nextBillNo());
+}
+
+function payMode() { return document.querySelector('input[name="pay"]:checked').value; }
+
+function tendered() {
+  const v = parseFloat($("#tendered").value);
+  return isNaN(v) ? null : v;
+}
+
+function updateChange() {
+  const isCash = payMode() === "Cash";
+  $("#cashbox").hidden = !isCash;
+  const t = tendered(), total = cartTotal(), box = $("#change");
+  let short = false;
+  if (isCash && t !== null && cart.size) {
+    const diff = t - total;
+    short = diff < 0;
+    box.hidden = false;
+    box.classList.toggle("short", short);
+    $("#changeLbl").textContent = short ? "Short by" : "Change to give";
+    $("#changeAmt").textContent = rupee(Math.abs(diff));
+  } else {
+    box.hidden = true;
+  }
+  $("#placeBtn").disabled = !cart.size || short;
 }
 
 function esc(s) {
@@ -221,6 +289,7 @@ function receiptBody(o) {
     <div class="hr"></div>
     <div class="kv"><span>Items</span><span>${o.items.reduce((a, i) => a + i.qty, 0)}</span></div>
     <div class="kv tot"><span>TOTAL</span><span>Rs ${o.total.toFixed(2)}</span></div>
+    ${o.tendered != null ? `<div class="kv"><span>Cash paid</span><span>${o.tendered.toFixed(2)}</span></div><div class="kv"><span>Change</span><span>${o.change.toFixed(2)}</span></div>` : ""}
     <div class="hr"></div>
     ${STALL.footer.map(l => `<div class="c ft">${esc(l)}</div>`).join("")}
     <div style="height:${cal.tail}mm"></div>
@@ -295,17 +364,21 @@ async function placeOrder() {
     billNo: fmtBill(n),
     seq: n,
     createdAt: new Date().toISOString(),
-    payment: document.querySelector('input[name="pay"]:checked').value,
+    payment: payMode(),
     items: [...cart.values()].map(l => ({ id: l.id, name: l.name, price: l.price, qty: l.qty })),
     total: cartTotal(),
     synced: false
   };
+  const t = tendered();
+  order.tendered = order.payment === "Cash" && t !== null ? t : null;
+  order.change = order.tendered !== null ? order.tendered - order.total : null;
   localStorage.setItem("vita_billno", String(n));
   const list = getOrders();
   list.push(order);
   saveOrders(list);
   localStorage.setItem("vita_last", JSON.stringify(order));
   cart.clear();
+  $("#tendered").value = "";
   render();
   setStatus(`Saved ${order.billNo} (${rupee(order.total)})`);
   await printHTML(receiptBody(order));
@@ -348,7 +421,14 @@ async function syncPending() {
 }
 
 $("#placeBtn").addEventListener("click", placeOrder);
-$("#clearBtn").addEventListener("click", () => { cart.clear(); render(); });
+$("#clearBtn").addEventListener("click", () => { cart.clear(); $("#tendered").value = ""; render(); });
+$("#tendered").addEventListener("input", updateChange);
+document.querySelectorAll('input[name="pay"]').forEach(r => r.addEventListener("change", updateChange));
+document.querySelectorAll(".quick button").forEach(b => b.addEventListener("click", () => {
+  $("#tendered").value = b.dataset.q === "exact" ? cartTotal() : b.dataset.q;
+  updateChange();
+}));
+$("#tendered").addEventListener("keydown", e => { if (e.key === "Enter" && !$("#placeBtn").disabled) placeOrder(); });
 $("#reprintBtn").addEventListener("click", () => {
   const last = localStorage.getItem("vita_last");
   if (!last) return toast("No bill yet");
