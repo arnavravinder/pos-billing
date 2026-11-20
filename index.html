@@ -299,6 +299,7 @@ function receiptBody(o) {
   return `
     <div class="c big">${esc(STALL.name)}</div>
     ${STALL.tagline ? `<div class="c sm">${esc(STALL.tagline)}</div>` : ""}
+    <div class="ono"><div class="lbl">ORDER NO.</div><div class="num">${o.seq ?? esc(o.billNo)}</div></div>
     <div class="hr"></div>
     <div class="kv"><span>Bill ${esc(o.billNo)}</span><span>${date}</span></div>
     <div class="kv"><span>${esc(o.payment)}</span><span>${time}</span></div>
@@ -349,6 +350,9 @@ function printHTML(bodyHTML) {
       .tot{font-size:1.3em;font-weight:900;padding-top:.8mm}
       .edge{display:flex;justify-content:space-between}
       .ft{margin-top:.8mm}
+      .ono{border:2px solid #000;text-align:center;margin:1.5mm 0 .5mm;padding:.5mm 0 1mm}
+      .ono .lbl{font-size:.9em;letter-spacing:2px}
+      .ono .num{font-size:4em;font-weight:900;line-height:1}
       .box{border:1px solid #000;padding:.6mm 1.2mm 1mm;margin-top:1.5mm}
       .sec{text-align:center;font-weight:900;letter-spacing:1px;border-bottom:1px dashed #000;padding-bottom:.5mm}
       .cut{border-top:2px dashed #000;margin-top:1mm}
