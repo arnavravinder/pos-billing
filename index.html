@@ -34,6 +34,8 @@ main{display:grid;grid-template-columns:1fr 380px;gap:12px;padding:12px;height:c
 .cart h2{margin:0;padding:12px 14px;font-size:16px;border-bottom:1px solid #eee}
 .lines{flex:1;overflow:auto}
 .line{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #f1f1f1}
+.grp{padding:5px 14px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#fff}
+.grp.food{background:#c2410c}.grp.bev{background:#0369a1}.grp.des{background:#be185d}
 .line .nm{font-size:14px}
 .line .sub{font-size:12px;color:#666}
 .qty{display:flex;align-items:center;gap:6px}
@@ -228,7 +230,12 @@ function render() {
   const box = $("#lines");
   box.innerHTML = "";
   if (!cart.size) box.innerHTML = `<div class="empty">Tap items to add them</div>`;
-  for (const l of cart.values()) {
+  for (const g of groupLines([...cart.values()])) {
+    const h = document.createElement("div");
+    h.className = "grp " + g.cls;
+    h.textContent = g.title;
+    box.appendChild(h);
+    for (const l of g.lines) {
     const row = document.createElement("div");
     row.className = "line";
     row.innerHTML = `<div><div class="nm">${esc(l.name)}</div><div class="sub">${rupee(l.price)} each</div></div>
@@ -236,10 +243,20 @@ function render() {
       <div class="amt">${rupee(l.price * l.qty)}</div>`;
     row.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => changeQty(l, parseInt(btn.dataset.d, 10))));
     box.appendChild(row);
+    }
   }
   $("#total").textContent = rupee(cartTotal());
   updateChange();
   $("#nextBill").textContent = "Next bill " + fmtBill(nextBillNo());
+}
+
+function groupLines(lines) {
+  const pos = id => MENU.findIndex(m => m.id === id);
+  const catOf = l => l.cat || MENU.find(m => m.id === l.id)?.cat;
+  return CATEGORIES.map(c => ({
+    ...c,
+    lines: lines.filter(l => catOf(l) === c.key).sort((a, b) => pos(a.id) - pos(b.id))
+  })).filter(g => g.lines.length);
 }
 
 function payMode() { return document.querySelector('input[name="pay"]:checked').value; }
@@ -275,9 +292,10 @@ function receiptBody(o) {
   const d = new Date(o.createdAt);
   const date = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
   const time = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-  const rows = o.items.map(i => `
+  const rows = groupLines(o.items).map((g, gi) => `
+    <div class="sec${gi ? " gap" : ""}">${esc(g.title.toUpperCase())}</div>` + g.lines.map(i => `
     <div class="nm">${esc(i.name)}</div>
-    <div class="kv sub"><span>${i.qty} x ${i.price}</span><span>${(i.qty * i.price).toFixed(2)}</span></div>`).join("");
+    <div class="kv sub"><span>${i.qty} x ${i.price}</span><span>${(i.qty * i.price).toFixed(2)}</span></div>`).join("")).join("");
   return `
     <div class="c big">${esc(STALL.name)}</div>
     ${STALL.tagline ? `<div class="c sm">${esc(STALL.tagline)}</div>` : ""}
@@ -331,6 +349,8 @@ function printHTML(bodyHTML) {
       .tot{font-size:1.3em;font-weight:900;padding-top:.8mm}
       .edge{display:flex;justify-content:space-between}
       .ft{margin-top:.8mm}
+      .sec{background:#000;color:#fff;text-align:center;font-weight:900;letter-spacing:1px;padding:.3mm 0;margin-top:.6mm}
+      .sec.gap{margin-top:2mm}
       .cut{border-top:2px dashed #000;margin-top:1mm}
       .fill{height:3mm;background:#000;margin:1mm 0}
     </style></head><body><div id="r">${bodyHTML}</div></body></html>`);
@@ -365,7 +385,7 @@ async function placeOrder() {
     seq: n,
     createdAt: new Date().toISOString(),
     payment: payMode(),
-    items: [...cart.values()].map(l => ({ id: l.id, name: l.name, price: l.price, qty: l.qty })),
+    items: groupLines([...cart.values()]).flatMap(g => g.lines).map(l => ({ id: l.id, cat: l.cat, name: l.name, price: l.price, qty: l.qty })),
     total: cartTotal(),
     synced: false
   };
