@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Vita POS</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;background:#f3f4f6;color:#111}
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#111;color:#fff}
+header h1{font-size:18px;margin:0}
+header .meta{font-size:13px;opacity:.8}
+main{display:grid;grid-template-columns:1fr 380px;gap:12px;padding:12px;height:calc(100vh - 46px)}
+.menu{overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;align-content:start}
+.item{background:#fff;border:2px solid #e5e7eb;border-radius:10px;padding:14px;text-align:left;cursor:pointer;font-size:15px;position:relative;user-select:none}
+.item:active{transform:scale(.98)}
+.item .price{color:#555;font-size:14px;margin-top:6px}
+.item .badge{position:absolute;top:6px;right:8px;background:#111;color:#fff;border-radius:999px;font-size:12px;padding:2px 8px}
+.cart{background:#fff;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;border:1px solid #e5e7eb}
+.cart h2{margin:0;padding:12px 14px;font-size:16px;border-bottom:1px solid #eee}
+.lines{flex:1;overflow:auto}
+.line{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #f1f1f1}
+.line .nm{font-size:14px}
+.line .sub{font-size:12px;color:#666}
+.qty{display:flex;align-items:center;gap:6px}
+.qty button{width:30px;height:30px;border-radius:6px;border:1px solid #ccc;background:#fafafa;font-size:16px;cursor:pointer}
+.amt{min-width:60px;text-align:right;font-weight:600}
+.empty{padding:20px;color:#888;text-align:center}
+.foot{padding:12px 14px;border-top:1px solid #eee}
+.total{display:flex;justify-content:space-between;font-size:22px;font-weight:700;margin-bottom:10px}
+.pay{display:flex;gap:8px;margin-bottom:10px}
+.pay label{flex:1;border:2px solid #ddd;border-radius:8px;padding:8px;text-align:center;cursor:pointer;font-weight:600}
+.pay input{display:none}
+.pay input:checked+span{color:#fff}
+.pay label:has(input:checked){background:#111;border-color:#111;color:#fff}
+.btn{width:100%;padding:14px;font-size:17px;font-weight:700;border:0;border-radius:8px;cursor:pointer}
+.primary{background:#16a34a;color:#fff}
+.primary:disabled{background:#9ca3af;cursor:not-allowed}
+.row{display:flex;gap:8px;margin-top:8px}
+.ghost{background:#f3f4f6;color:#111;font-size:14px;padding:10px;font-weight:600}
+.status{font-size:12px;color:#666;margin-top:8px;min-height:16px}
+details{margin-top:8px;font-size:13px}
+details .grid{display:grid;grid-template-columns:1fr 80px;gap:6px;margin-top:8px;align-items:center}
+details input{width:100%;padding:4px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+#printFrame{position:fixed;left:-10000px;top:0;width:80mm;height:2000px;border:0;visibility:hidden}
+</style>
+</head>
+<body>
+<header>
+<h1>Project Vita · POS</h1>
+<div class="meta"><span id="nextBill"></span> · <span id="fbState">local only</span></div>
+</header>
+<main>
+<section class="menu" id="menu"></section>
+<aside class="cart">
+<h2>Current bill</h2>
+<div class="lines" id="lines"></div>
+<div class="foot">
+<div class="total"><span>Total</span><span id="total">₹0</span></div>
+<div class="pay">
+<label><input type="radio" name="pay" value="Cash" checked><span>Cash</span></label>
+<label><input type="radio" name="pay" value="UPI"><span>UPI</span></label>
+</div>
+<button class="btn primary" id="placeBtn" disabled>Place order &amp; print</button>
+<div class="row">
+<button class="btn ghost" id="clearBtn">Clear</button>
+<button class="btn ghost" id="reprintBtn">Reprint last</button>
+<button class="btn ghost" id="testBtn">Test print</button>
+</div>
+<div class="status" id="status"></div>
+<details>
+<summary>Printer calibration</summary>
+<div class="grid">
+<label for="cPaper">Paper width (mm)</label><input id="cPaper" type="number" step="0.5">
+<label for="cContent">Print width (mm)</label><input id="cContent" type="number" step="0.5">
+<label for="cLeft">Left offset (mm)</label><input id="cLeft" type="number" step="0.5">
+<label for="cFont">Font size (px)</label><input id="cFont" type="number" step="0.5">
+<label for="cFeed">Bottom feed (mm)</label><input id="cFeed" type="number" step="0.5">
+</div>
+</details>
+</div>
+</aside>
+</main>
+<div class="toast" id="toast"></div>
+<iframe id="printFrame" title="print"></iframe>
+
+<script type="module">
+const MENU = [
+  { id: "m1", name: "Item 1", price: 50 },
+  { id: "m2", name: "Item 2", price: 80 },
+  { id: "m3", name: "Item 3", price: 100 },
+  { id: "m4", name: "Item 4", price: 120 },
+  { id: "m5", name: "Item 5", price: 30 },
+  { id: "m6", name: "Item 6", price: 150 }
+];
+
+const STALL = {
+  name: "PROJECT VITA",
+  tagline: "Every purchase supports our charity work",
+  footer: "Thank you!"
+};
+
+const FIREBASE_CONFIG = null;
+
+const DEFAULT_CAL = { paper: 58, content: 48, left: 0, font: 12, feed: 4 };
+
+const $ = s => document.querySelector(s);
+const cart = new Map();
+const rupee = n => "₹" + Number(n).toLocaleString("en-IN");
+let db = null, fs = null;
+
+function loadCal() {
+  try { return { ...DEFAULT_CAL, ...JSON.parse(localStorage.getItem("vita_cal") || "{}") }; }
+  catch { return { ...DEFAULT_CAL }; }
+}
+let cal = loadCal();
+
+function bindCal() {
+  const map = { cPaper: "paper", cContent: "content", cLeft: "left", cFont: "font", cFeed: "feed" };
+  for (const [id, key] of Object.entries(map)) {
+    const el = document.getElementById(id);
+    el.value = cal[key];
+    el.addEventListener("change", () => {
+      const v = parseFloat(el.value);
+      if (!isNaN(v)) { cal[key] = v; localStorage.setItem("vita_cal", JSON.stringify(cal)); }
+    });
+  }
+}
+
+function getOrders() {
+  try { return JSON.parse(localStorage.getItem("vita_orders") || "[]"); } catch { return []; }
+}
+function saveOrders(list) { localStorage.setItem("vita_orders", JSON.stringify(list)); }
+function nextBillNo() { return (parseInt(localStorage.getItem("vita_billno") || "0", 10) + 1); }
+function fmtBill(n) { return "V-" + String(n).padStart(4, "0"); }
+
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+function renderMenu() {
+  const m = $("#menu");
+  m.innerHTML = "";
+  for (const item of MENU) {
+    const b = document.createElement("button");
+    b.className = "item";
+    const q = cart.get(item.id)?.qty || 0;
+    b.innerHTML = `<div>${esc(item.name)}</div><div class="price">${rupee(item.price)}</div>${q ? `<span class="badge">${q}</span>` : ""}`;
+    b.addEventListener("click", () => changeQty(item, 1));
+    m.appendChild(b);
+  }
+}
+
+function changeQty(item, d) {
+  const cur = cart.get(item.id) || { ...item, qty: 0 };
+  cur.qty += d;
+  if (cur.qty <= 0) cart.delete(item.id); else cart.set(item.id, cur);
+  render();
+}
+
+function cartTotal() {
+  let t = 0;
+  for (const l of cart.values()) t += l.price * l.qty;
+  return t;
+}
+
+function render() {
+  renderMenu();
+  const box = $("#lines");
+  box.innerHTML = "";
+  if (!cart.size) box.innerHTML = `<div class="empty">Tap items to add them</div>`;
+  for (const l of cart.values()) {
+    const row = document.createElement("div");
+    row.className = "line";
+    row.innerHTML = `<div><div class="nm">${esc(l.name)}</div><div class="sub">${rupee(l.price)} each</div></div>
+      <div class="qty"><button data-d="-1">−</button><b>${l.qty}</b><button data-d="1">+</button></div>
+      <div class="amt">${rupee(l.price * l.qty)}</div>`;
+    row.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => changeQty(l, parseInt(btn.dataset.d, 10))));
+    box.appendChild(row);
+  }
+  $("#total").textContent = rupee(cartTotal());
+  $("#placeBtn").disabled = !cart.size;
+  $("#nextBill").textContent = "Next bill " + fmtBill(nextBillNo());
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function receiptBody(o) {
+  const d = new Date(o.createdAt);
+  const date = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
+  const time = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  const rows = o.items.map(i => `
+    <div class="nm">${esc(i.name)}</div>
+    <div class="kv sub"><span>${i.qty} x ${i.price}</span><span>${(i.qty * i.price).toFixed(2)}</span></div>`).join("");
+  return `
+    <div class="c big">${esc(STALL.name)}</div>
+    ${STALL.tagline ? `<div class="c sm">${esc(STALL.tagline)}</div>` : ""}
+    <div class="hr"></div>
+    <div class="kv"><span>Bill ${esc(o.billNo)}</span><span>${date}</span></div>
+    <div class="kv"><span>${esc(o.payment)}</span><span>${time}</span></div>
+    <div class="hr"></div>
+    ${rows}
+    <div class="hr"></div>
+    <div class="kv"><span>Items</span><span>${o.items.reduce((a, i) => a + i.qty, 0)}</span></div>
+    <div class="kv tot"><span>TOTAL</span><span>Rs ${o.total.toFixed(2)}</span></div>
+    <div class="hr"></div>
+    <div class="c">${esc(STALL.footer)}</div>`;
+}
+
+function testBody() {
+  return `
+    <div class="c big">PRINT TEST</div>
+    <div class="hr"></div>
+    <div class="edge"><span>|L</span><span>R|</span></div>
+    <div class="fill"></div>
+    <div>1234567890123456789012345678901234567890</div>
+    <div class="c">paper ${cal.paper}mm · print ${cal.content}mm</div>
+    <div class="c">left ${cal.left}mm · font ${cal.font}px</div>
+    <div class="hr"></div>
+    <div class="c">If both | marks print and the black bar fills edge to edge, width is right.</div>
+    <div class="hr"></div>
+    <div class="c">END</div>`;
+}
+
+function printHTML(bodyHTML) {
+  return new Promise(resolve => {
+    const frame = $("#printFrame");
+    const doc = frame.contentDocument;
+    doc.open();
+    doc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><style id="pg">@page{size:${cal.paper}mm 200mm;margin:0}</style><style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      html,body{width:${cal.paper}mm;background:#fff;color:#000}
+      body{font-family:"Courier New",Consolas,monospace;font-size:${cal.font}px;font-weight:700;line-height:1.25;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      #r{width:${cal.content}mm;margin-left:${cal.left}mm;padding-top:1mm;padding-bottom:${cal.feed}mm;overflow:hidden;word-wrap:break-word}
+      .c{text-align:center}.r{text-align:right;white-space:nowrap}
+      .big{font-size:1.45em;font-weight:900;letter-spacing:.5px}
+      .sm{font-size:.85em;font-weight:600}
+      .hr{border-top:1px dashed #000;margin:1.2mm 0}
+      .kv{display:flex;justify-content:space-between;gap:2mm}
+      .kv span{white-space:nowrap}
+      .nm{padding-top:.6mm}.sub{padding-left:2mm}
+      .tot{font-size:1.3em;font-weight:900;padding-top:.8mm}
+      .edge{display:flex;justify-content:space-between}
+      .fill{height:3mm;background:#000;margin:1mm 0}
+    </style></head><body><div id="r">${bodyHTML}</div></body></html>`);
+    doc.close();
+    const go = () => {
+      const r = doc.getElementById("r");
+      const mm = Math.ceil(r.getBoundingClientRect().height * 25.4 / 96) + 1;
+      doc.getElementById("pg").textContent = `@page{size:${cal.paper}mm ${mm + 1}mm;margin:0}`;
+      for (const el of [doc.documentElement, doc.body]) {
+        el.style.height = mm + "mm";
+        el.style.overflow = "hidden";
+      }
+      setTimeout(() => {
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+        resolve();
+      }, 50);
+    };
+    if (doc.fonts && doc.fonts.ready) doc.fonts.ready.then(go); else setTimeout(go, 100);
+  });
+}
+
+async function placeOrder() {
+  if (!cart.size) return;
+  const n = nextBillNo();
+  const order = {
+    billNo: fmtBill(n),
+    seq: n,
+    createdAt: new Date().toISOString(),
+    payment: document.querySelector('input[name="pay"]:checked').value,
+    items: [...cart.values()].map(l => ({ id: l.id, name: l.name, price: l.price, qty: l.qty })),
+    total: cartTotal(),
+    synced: false
+  };
+  localStorage.setItem("vita_billno", String(n));
+  const list = getOrders();
+  list.push(order);
+  saveOrders(list);
+  localStorage.setItem("vita_last", JSON.stringify(order));
+  cart.clear();
+  render();
+  setStatus(`Saved ${order.billNo} (${rupee(order.total)})`);
+  await printHTML(receiptBody(order));
+  syncOrder(order);
+}
+
+function setStatus(s) { $("#status").textContent = s; }
+
+async function initFirebase() {
+  if (!FIREBASE_CONFIG) return;
+  try {
+    const appMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+    fs = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+    const app = appMod.initializeApp(FIREBASE_CONFIG);
+    db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache() });
+    $("#fbState").textContent = "firebase on";
+    syncPending();
+  } catch (e) {
+    console.error(e);
+    $("#fbState").textContent = "firebase failed, saving locally";
+  }
+}
+
+async function syncOrder(order) {
+  if (!db) return;
+  try {
+    await fs.setDoc(fs.doc(db, "orders", order.billNo + "_" + Date.parse(order.createdAt)), {
+      ...order, synced: true, serverTime: fs.serverTimestamp()
+    });
+    const list = getOrders();
+    const o = list.find(x => x.billNo === order.billNo && x.createdAt === order.createdAt);
+    if (o) { o.synced = true; saveOrders(list); }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function syncPending() {
+  for (const o of getOrders().filter(x => !x.synced)) await syncOrder(o);
+}
+
+$("#placeBtn").addEventListener("click", placeOrder);
+$("#clearBtn").addEventListener("click", () => { cart.clear(); render(); });
+$("#reprintBtn").addEventListener("click", () => {
+  const last = localStorage.getItem("vita_last");
+  if (!last) return toast("No bill yet");
+  printHTML(receiptBody(JSON.parse(last)));
+});
+$("#testBtn").addEventListener("click", () => printHTML(testBody()));
+window.addEventListener("online", syncPending);
+
+bindCal();
+render();
+initFirebase();
+</script>
+</body>
+</html>
